@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import io
+import xlsxwriter # Importante para que funcione la descarga
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Analítica Financiera Pro", layout="wide", page_icon="📈")
@@ -43,16 +44,13 @@ def convertir_df_a_excel(df):
 
 # --- INTERFAZ DE USUARIO ---
 st.title("📈 Plataforma de Proyección Financiera IA")
-st.markdown("""
-**Instrucciones:** Sube tu histórico de ventas y ajusta los escenarios de riesgo.
-""")
 
 # --- 1. CARGADOR ---
 st.sidebar.header("📁 Carga de Datos")
 uploaded_file = st.sidebar.file_uploader("Sube tu Excel de Ventas aquí", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is None:
-    st.info("👋 Por favor sube un archivo Excel para comenzar.")
+    st.info("👋 Sube un archivo Excel para comenzar.")
     st.stop()
 
 # --- 2. PROCESAMIENTO ---
@@ -72,82 +70,139 @@ except Exception as e:
 
 # --- 3. CONTROLES ---
 st.sidebar.divider()
-st.sidebar.header("⚙️ Configuración de Riesgo")
+st.sidebar.header("⚙️ Configuración")
+
+# Opción de Backtesting (NUEVO)
+modo_prueba = st.sidebar.checkbox("🧪 Activar Modo Prueba (Backtesting)", value=False, help="Oculta los últimos meses reales para verificar si la IA acierta.")
 
 volatilidad_input = st.sidebar.slider("Nivel de Volatilidad", 1, 50, 10, format="%d%%")
 factor_riesgo = volatilidad_input / 100
-dias_proyeccion = st.sidebar.slider("Meses a Proyectar", 3, 24, 6)
 
-# --- 4. MOTOR IA ---
-with st.spinner('Calculando escenarios...'):
-    modelo = ExponentialSmoothing(
-        df_ventas['Ventas'],
-        trend='add',
-        seasonal='add',
-        seasonal_periods=12
-    ).fit()
+meses_input = st.sidebar.slider("Meses a Proyectar / Ocultar", 3, 24, 6)
+
+# --- 4. MOTOR IA (LÓGICA DUAL) ---
+with st.spinner('Procesando...'):
     
-    proyeccion = modelo.forecast(dias_proyeccion)
-    
+    if modo_prueba:
+        # --- MODO BACKTESTING (Viaje al pasado) ---
+        st.warning(f"⚠️ MODO PRUEBA ACTIVO: Ocultando los últimos {meses_input} meses reales para validar la IA.")
+        
+        # Cortamos los datos
+        datos_entrenamiento = df_ventas.iloc[:-meses_input] # Todo MENOS los últimos X meses
+        datos_reales_ocultos = df_ventas.iloc[-meses_input:] # Solo los últimos X meses (La Verdad)
+        
+        modelo = ExponentialSmoothing(
+            datos_entrenamiento['Ventas'],
+            trend='add',
+            seasonal='add',
+            seasonal_periods=12
+        ).fit()
+        
+        # Predecimos el periodo oculto
+        proyeccion = modelo.forecast(meses_input)
+        
+        # Calculamos el error (MAPE)
+        errores = abs(datos_reales_ocultos['Ventas'] - proyeccion)
+        mape = (errores / datos_reales_ocultos['Ventas']).mean() * 100
+        precision = 100 - mape
+        
+    else:
+        # --- MODO NORMAL (Hacia el futuro) ---
+        modelo = ExponentialSmoothing(
+            df_ventas['Ventas'],
+            trend='add',
+            seasonal='add',
+            seasonal_periods=12
+        ).fit()
+        
+        proyeccion = modelo.forecast(meses_input)
+        precision = None # No sabemos la precisión del futuro aún
+
+    # Escenarios de Riesgo
     escenario_optimista = proyeccion * (1 + factor_riesgo)
     escenario_pesimista = proyeccion * (1 - factor_riesgo)
 
 # --- 5. VISUALIZACIÓN ---
-tab1, tab2 = st.tabs(["📊 Tablero de Control", "📋 Datos Históricos"])
+tab1, tab2 = st.tabs(["📊 Tablero Analítico", "📋 Datos Detallados"])
 
 with tab1:
-    st.subheader(f"Proyección a {dias_proyeccion} Meses (Volatilidad: {volatilidad_input}%)")
     
-    # A. GRÁFICO
+    # TITULO DINÁMICO
+    if modo_prueba:
+        st.subheader(f"Resultado de la Prueba: Precisión del {precision:.1f}% (MAPE: {mape:.1f}%)")
+    else:
+        st.subheader(f"Proyección Futura a {meses_input} Meses")
+    
     fig, ax = plt.subplots(figsize=(12, 5))
     plt.style.use('bmh')
     
-    ax.plot(df_ventas.index, df_ventas['Ventas'], label='Histórico', color='#2c3e50', linewidth=2)
-    
-    ultimo_real = df_ventas['Ventas'].iloc[-1]
-    ax.plot([df_ventas.index[-1], proyeccion.index[0]], [ultimo_real, proyeccion.iloc[0]], 
-            color='#e67e22', linestyle='--', linewidth=2)
-    
-    ax.plot(proyeccion.index, proyeccion, label='Proyección Base', color='#e67e22', linestyle='--', marker='o')
-    ax.fill_between(proyeccion.index, escenario_pesimista, escenario_optimista, 
-                    color='#f1c40f', alpha=0.2, label=f'Rango Riesgo (+/- {factor_riesgo*100:.0f}%)')
+    if modo_prueba:
+        # GRAFICAR MODO PRUEBA
+        # 1. Historia conocida
+        ax.plot(datos_entrenamiento.index, datos_entrenamiento['Ventas'], label='Entrenamiento (Visible)', color='#2c3e50')
+        # 2. Realidad oculta (La verdad)
+        ax.plot(datos_reales_ocultos.index, datos_reales_ocultos['Ventas'], label='Realidad (Oculta)', color='green', linewidth=2, marker='x')
+        # 3. Lo que dijo la IA
+        ax.plot(proyeccion.index, proyeccion, label='Predicción IA', color='#e67e22', linestyle='--', marker='o')
+        
+    else:
+        # GRAFICAR MODO FUTURO
+        ax.plot(df_ventas.index, df_ventas['Ventas'], label='Histórico Real', color='#2c3e50', linewidth=2)
+        # Conector
+        ultimo_real = df_ventas['Ventas'].iloc[-1]
+        ax.plot([df_ventas.index[-1], proyeccion.index[0]], [ultimo_real, proyeccion.iloc[0]], 
+                color='#e67e22', linestyle='--', linewidth=2)
+        # Proyección
+        ax.plot(proyeccion.index, proyeccion, label='Proyección Base', color='#e67e22', linestyle='--', marker='o')
+        ax.fill_between(proyeccion.index, escenario_pesimista, escenario_optimista, 
+                        color='#f1c40f', alpha=0.2, label=f'Rango Riesgo (+/- {factor_riesgo*100:.0f}%)')
     
     ax.legend()
     st.pyplot(fig)
     
-    # B. MÉTRICAS
+    # MÉTRICAS Y TABLAS
     st.divider()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Pesimista (Total)", f"${escenario_pesimista.sum():,.2f}", delta="-Riesgo", delta_color="inverse")
-    c2.metric("Esperado (Total)", f"${proyeccion.sum():,.2f}", delta="Base")
-    c3.metric("Optimista (Total)", f"${escenario_optimista.sum():,.2f}", delta="+Oportunidad")
     
-    # C. TABLA DETALLADA (LO QUE PEDISTE)
-    st.divider()
-    st.subheader("📋 Detalle Mensual de Proyección")
-    
-    # Creamos un DataFrame limpio para mostrar
-    df_detalle = pd.DataFrame({
-        "Escenario Pesimista": escenario_pesimista,
-        "Proyección Base": proyeccion,
-        "Escenario Optimista": escenario_optimista
-    })
-    
-    # Mostramos la tabla con formato de dinero
-    st.dataframe(
-        df_detalle.style.format("${:,.2f}"), 
-        use_container_width=True
-    )
-    
-    # D. BOTÓN DE DESCARGA
-    excel_data = convertir_df_a_excel(df_detalle)
-    st.download_button(
-        label="📥 Descargar Proyección en Excel",
-        data=excel_data,
-        file_name='proyeccion_ventas_ia.xlsx',
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+    if modo_prueba:
+        # En modo prueba mostramos la comparación Real vs IA
+        df_comparativo = pd.DataFrame({
+            "Realidad": datos_reales_ocultos['Ventas'],
+            "Predicción IA": proyeccion,
+            "Diferencia $": datos_reales_ocultos['Ventas'] - proyeccion,
+            "Error %": ((abs(datos_reales_ocultos['Ventas'] - proyeccion) / datos_reales_ocultos['Ventas']) * 100)
+        })
+        st.write("🔎 **Comparativa: Realidad vs IA**")
+        st.dataframe(df_comparativo.style.format({
+            "Realidad": "${:,.2f}", 
+            "Predicción IA": "${:,.2f}", 
+            "Diferencia $": "${:,.2f}", 
+            "Error %": "{:.2f}%"
+        }))
+        
+    else:
+        # En modo normal mostramos los escenarios
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Pesimista", f"${escenario_pesimista.sum():,.2f}", delta="-Riesgo", delta_color="inverse")
+        c2.metric("Esperado", f"${proyeccion.sum():,.2f}", delta="Base")
+        c3.metric("Optimista", f"${escenario_optimista.sum():,.2f}", delta="+Oportunidad")
+        
+        st.subheader("📋 Detalle de Proyección")
+        df_detalle = pd.DataFrame({
+            "Pesimista": escenario_pesimista,
+            "Base": proyeccion,
+            "Optimista": escenario_optimista
+        })
+        st.dataframe(df_detalle.style.format("${:,.2f}"), use_container_width=True)
+        
+        # Botón Excel
+        excel_data = convertir_df_a_excel(df_detalle)
+        st.download_button(
+            label="📥 Descargar Excel",
+            data=excel_data,
+            file_name='proyeccion_ia.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
 
 with tab2:
-    st.subheader("Auditoría de Datos Históricos")
+    st.subheader("Auditoría de Datos")
     st.dataframe(df_ventas.sort_index(ascending=False).style.format("${:,.2f}"), use_container_width=True)
