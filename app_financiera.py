@@ -1,39 +1,37 @@
-# --- FUNCIÓN DE LIMPIEZA AUTOMÁTICA (MEJORADA v2) ---
-def limpiar_datos(df_raw):
-    # 1. Limpieza de encabezados
-    df_raw.columns = df_raw.columns.str.strip().str.lower()
-    col_fecha = None
-    col_ventas = None
-    
-    # 2. Detección inteligente de columnas
-    for col in df_raw.columns:
-        if 'fecha' in col or 'date' in col or 'periodo' in col:
-            col_fecha = col
-        if 'venta' in col or 'sale' in col or 'monto' in col or 'cantidad' in col:
-            col_ventas = col
-            
-    if not col_fecha or not col_ventas:
-        return None, "❌ Error: No encontré columnas de 'Fecha' o 'Ventas' claras."
-    
-    # 3. Renombrar y dar formato
-    df_raw = df_raw.rename(columns={col_fecha: 'Fecha', col_ventas: 'Ventas'})
-    
-    try:
-        df_raw['Fecha'] = pd.to_datetime(df_raw['Fecha'])
-        df_raw = df_raw.sort_values('Fecha')
-        df_raw = df_raw.set_index('Fecha')
-        
-        # --- CAMBIO CLAVE AQUÍ ---
-        # En lugar de solo rellenar (asfreq), le decimos que SUME las ventas del mes.
-        # 'MS' significa Month Start (Inicio de Mes).
-        df_raw = df_raw.resample('MS').sum()
-        
-        # Si después de sumar quedan meses en 0 (porque no hubo ventas), 
-        # reemplazamos con un valor pequeño o el promedio para no romper la IA
-        # (Opcional: Holt-Winters maneja bien los datos pero prefiere no ceros)
-        df_raw['Ventas'] = df_raw['Ventas'].replace(0, pd.NA).fillna(method='ffill')
-        
-    except Exception as e:
-        return None, f"❌ Error al procesar las fechas: {e}"
-        
-    return df_raw, "✅ Datos procesados y Agrupados por Mes correctamente."
+import pandas as pd
+import numpy as np
+
+# Configuración
+anios = 5
+meses = anios * 12
+fecha_inicio = '2019-01-01'
+
+# 1. Crear fechas
+fechas = pd.date_range(start=fecha_inicio, periods=meses, freq='MS')
+
+# 2. Crear componentes de la serie
+# A. Tendencia: El negocio crece un poco cada mes
+tendencia = np.linspace(10000, 25000, meses) 
+
+# B. Estacionalidad: Patrón de ventas (Bajo en Enero, Alto en Diciembre)
+# Multiplicadores para cada mes (Ene=0.8, ..., Dic=1.5)
+patron_anual = [0.85, 0.80, 0.95, 1.0, 1.05, 1.0, 1.05, 1.1, 0.95, 1.1, 1.3, 1.6]
+estacionalidad = np.tile(patron_anual, anios)
+
+# C. Ruido (Aleatoriedad del mundo real)
+ruido = np.random.normal(0, 500, meses)
+
+# 3. Calcular Venta Final
+ventas = (tendencia * estacionalidad) + ruido
+
+# 4. Crear DataFrame y Exportar
+df = pd.DataFrame({
+    'Fecha': fechas,
+    'Ventas Totales': ventas
+})
+
+nombre_archivo = "ventas_retail_sample.xlsx"
+df.to_excel(nombre_archivo, index=False)
+
+print(f"✅ ¡Archivo '{nombre_archivo}' generado con éxito!")
+print(f"   Contiene {meses} meses de datos simulados.")
