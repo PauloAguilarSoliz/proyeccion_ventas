@@ -17,7 +17,6 @@ MAPA_MESES = {
 }
 
 def escanear_mes_en_hoja(df_preview, nombre_pestana):
-    """Busca el mes en la pestaña O en el contenido."""
     nombre_pestana_limpio = nombre_pestana.strip().upper()
     for mes_nombre, mes_num in MAPA_MESES.items():
         if mes_nombre in nombre_pestana_limpio:
@@ -29,7 +28,6 @@ def escanear_mes_en_hoja(df_preview, nombre_pestana):
     return None
 
 def detectar_anio_archivo(nombre_archivo, anio_default):
-    """Busca un año (ej: 2023) en el nombre del archivo."""
     match = re.search(r'(20[2-3][0-9])', nombre_archivo)
     if match:
         return int(match.group(1)), True
@@ -100,8 +98,8 @@ def convertir_df_a_excel(df):
 
 # --- FRONTEND ---
 
-st.title("🤖 Consola de Inteligencia Financiera v7.1")
-st.markdown("### Sistema Multi-Anual Inteligente")
+st.title("🤖 Consola de Inteligencia Financiera v7.2")
+st.markdown("### Sistema Multi-Anual Inteligente (Modo Agresivo)")
 
 # 1. INGESTA
 st.sidebar.header("1. Carga de Datos")
@@ -138,35 +136,53 @@ factor_riesgo = volatilidad_input / 100
 meses_proy = st.sidebar.slider("Meses a Proyectar", 3, 24, 6)
 
 try:
-    # --- LÓGICA DE CORRECCIÓN DE MODELO Y ADVERTENCIAS ---
-    
-    # Definimos datos base
     if modo_prueba:
         if len(df_ventas) <= meses_proy:
             st.error("❌ Datos insuficientes para la prueba.")
             st.stop()
-        # Usamos series directas
         train = df_ventas['Ventas'].iloc[:-meses_proy]
         test = df_ventas['Ventas'].iloc[-meses_proy:]
         datos_modelo = train
     else:
         datos_modelo = df_ventas['Ventas']
 
-    # Inteligencia Adaptativa + ADVERTENCIA RESTAURADA
-    usar_estacionalidad = False
+    # --- CAMBIO CLAVE AQUÍ: Lógica "Forzada" ---
     
-    if len(datos_modelo) < 24: # Menos de 2 años
-         modelo = ExponentialSmoothing(datos_modelo, trend='add', seasonal=None, damped_trend=True).fit()
-         # ¡AQUÍ ESTÁ LA ADVERTENCIA DE VUELTA!
-         st.warning(f"⚠️ **Atención:** Tienes {len(datos_modelo)} meses de historia. Se necesitan 24 meses para detectar Patrones Anuales (Estacionalidad). El sistema usará solo Tendencia Lineal.")
-    else:
-         modelo = ExponentialSmoothing(datos_modelo, trend='add', seasonal='add', seasonal_periods=12).fit()
-         usar_estacionalidad = True
-         st.success(f"✅ Historia Robusta ({len(datos_modelo)} meses): Usando Tendencia + Estacionalidad Completa.")
+    # Intentamos forzar el modelo estacional primero (Plan A)
+    # Bajamos el requisito mínimo de 24 a 12 meses.
+    # Usamos initialization_method='estimated' para que sea más flexible.
+    modelo_exitoso = False
+    modelo = None
+    
+    try:
+        if len(datos_modelo) >= 12: # Mínimo absoluto un año
+            modelo = ExponentialSmoothing(
+                datos_modelo, 
+                trend='add', 
+                seasonal='add', 
+                seasonal_periods=12,
+                initialization_method='estimated' # ¡ESTA ES LA LLAVE MAESTRA!
+            ).fit()
+            modelo_exitoso = True
+            if modo_prueba:
+                 st.caption("✅ Auditoría usando Modelo Estacional (Forzado).")
+    except Exception as e_seasonal:
+        # Si falla el forzado, capturamos el error silenciosamente y seguimos al Plan B
+        pass
+    
+    # Plan B: Si falló el estacional o hay muy pocos datos, usamos Tendencia
+    if not modelo_exitoso:
+        modelo = ExponentialSmoothing(
+            datos_modelo, 
+            trend='add', 
+            seasonal=None, 
+            damped_trend=True,
+            initialization_method='estimated'
+        ).fit()
+        st.warning(f"⚠️ Nota: Usando Tendencia simple (Datos insuficientes para patrón anual robusto). Historia disponible: {len(datos_modelo)} meses.")
 
     proyeccion = modelo.forecast(meses_proy)
     
-    # Preparar datos para visualización
     if modo_prueba:
         errores_abs = abs(test - proyeccion)
         mape = (errores_abs / test).mean() * 100
@@ -177,7 +193,7 @@ try:
         titulo = f"Proyección Futura ({meses_proy} meses)"
 
 except Exception as e:
-    st.error(f"Error matemático: {e}")
+    st.error(f"Error matemático irrecuperable: {e}")
     st.stop()
 
 # 3. VISUALIZACIÓN
@@ -191,7 +207,7 @@ with tab1:
     if modo_prueba:
         ax.plot(train.index, train, label='Entrenamiento', color='#2c3e50')
         ax.plot(test.index, test, label='Realidad', color='green', marker='o')
-        ax.plot(proyeccion.index, proyeccion, label='IA', color='#e67e22', linestyle='--')
+        ax.plot(proyeccion.index, proyeccion, label='IA (Auditada)', color='#e67e22', linestyle='--')
         ax.fill_between(proyeccion.index, proyeccion*0.95, proyeccion*1.05, color='#e67e22', alpha=0.1)
     else:
         ax.plot(df_ventas.index, df_ventas['Ventas'], label='Histórico', color='#2c3e50')
@@ -205,7 +221,6 @@ with tab1:
 
 with tab2:
     if modo_prueba:
-        # CORRECCIÓN DE KEYERROR: Usamos 'test' y 'proyeccion' directamente
         df_comp = pd.DataFrame({
             "Realidad": test, 
             "IA": proyeccion, 
