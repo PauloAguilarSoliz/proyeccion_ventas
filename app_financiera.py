@@ -231,19 +231,30 @@ with tab1:
     # Formato de dinero en el eje Y
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     st.pyplot(fig)
-# TAB 2: TABLA DE PROYECCIÓN (RESTAURADA)
+# TAB 2: TABLA DE PROYECCIÓN (VERSIÓN CORREGIDA PARA AUDITORÍA)
 with tab2:
     st.subheader("Detalle Numérico")
     if modo_prueba:
-        # Tabla comparativa Real vs IA
+        # --- CORRECCIÓN AQUÍ ---
+        # Como 'test' ya es una Serie (lista de números), la usamos directamente.
+        # Quitamos ['Ventas'] para que no de error.
         df_comp = pd.DataFrame({
-            "Realidad": test['Ventas'],
+            "Realidad": test,               # Antes era: test['Ventas']
             "Predicción IA": proyeccion,
-            "Diferencia": test['Ventas'] - proyeccion
+            "Diferencia $": test - proyeccion,
+            "Error %": ((abs(test - proyeccion) / test) * 100)
         })
-        st.dataframe(df_comp.style.format("${:,.2f}"), use_container_width=True)
+        
+        # Mostramos la tabla formateada
+        st.dataframe(df_comp.style.format({
+            "Realidad": "${:,.2f}", 
+            "Predicción IA": "${:,.2f}", 
+            "Diferencia $": "${:,.2f}", 
+            "Error %": "{:.2f}%"
+        }), use_container_width=True)
+        
     else:
-        # Tabla de escenarios futuros
+        # Modo Futuro (Este no cambia, sigue igual)
         df_detalle = pd.DataFrame({
             "Pesimista": pes,
             "Base (Esperado)": proyeccion,
@@ -259,11 +270,11 @@ with tab2:
             file_name='proyeccion_ia.xlsx',
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-
 # TAB 3: DATOS HISTÓRICOS (RESTAURADA)
 with tab3:
     st.subheader("Auditoría de Datos Extraídos")
     st.write(f"Se consolidaron {len(df_ventas)} meses a partir de los archivos subidos.")
     st.dataframe(df_ventas.sort_index(ascending=False).style.format("${:,.2f}"), use_container_width=True)
+
 
 
