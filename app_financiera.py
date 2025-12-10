@@ -139,42 +139,65 @@ volatilidad_input = st.sidebar.slider("Nivel de Riesgo (%)", 1, 50, 10)
 factor_riesgo = volatilidad_input / 100
 meses_proy = st.sidebar.slider("Meses a Proyectar / Probar", 3, 24, 6)
 
-# --- 3. LÓGICA DE MODELADO (FUSIÓN) ---
+# --- 3. LÓGICA DE MODELADO (INTELIGENCIA ADAPTATIVA) ---
 try:
+    # 1. Definimos los datos de entrenamiento
     if modo_prueba:
-        # LÓGICA DE AUDITORÍA (BACKTESTING)
         if len(df_ventas) <= meses_proy:
-            st.error(f"❌ No tienes suficientes datos históricos ({len(df_ventas)}) para ocultar {meses_proy} meses.")
+            st.error(f"❌ Datos insuficientes ({len(df_ventas)} meses) para hacer una prueba de {meses_proy} meses.")
             st.stop()
+        datos_modelo = df_ventas['Ventas'].iloc[:-meses_proy]
+        datos_test = df_ventas['Ventas'].iloc[-meses_proy:]
+    else:
+        datos_modelo = df_ventas['Ventas']
+        datos_test = None
+
+    # 2. Selección Automática del Algoritmo (El Cerebro)
+    # Regla: Si tenemos menos de 18 meses, NO intentamos buscar patrones anuales (Navidad, etc)
+    # porque matemáticas fallan. Usamos solo Tendencia.
+    if len(datos_modelo) < 18:
+        modelo = ExponentialSmoothing(
+            datos_modelo, 
+            trend='add', 
+            seasonal=None, # Desactivamos estacionalidad para evitar el error
+            damped_trend=True # Suavizamos la tendencia para que no sea infinita
+        ).fit()
+        
+        if not modo_prueba:
+            st.warning(f"⚠️ Nota Técnica: Tienes {len(datos_modelo)} meses de historia. La IA detectará la Tendencia (crecimiento), pero necesita al menos 24 meses para detectar Estacionalidad (patrones anuales).")
             
-        train = df_ventas.iloc[:-meses_proy]
-        test = df_ventas.iloc[-meses_proy:]
-        
-        modelo = ExponentialSmoothing(train['Ventas'], trend='add', seasonal='add', seasonal_periods=min(len(train), 12)).fit()
-        proyeccion = modelo.forecast(meses_proy)
-        
-        # Métricas de error
-        errores_abs = abs(test['Ventas'] - proyeccion)
-        mape = (errores_abs / test['Ventas']).mean() * 100
+    else:
+        # Si hay mucha historia, usamos el modelo completo con Estacionalidad
+        modelo = ExponentialSmoothing(
+            datos_modelo, 
+            trend='add', 
+            seasonal='add', 
+            seasonal_periods=12
+        ).fit()
+
+    # 3. Generar Proyección
+    proyeccion = modelo.forecast(meses_proy)
+    
+    # 4. Configurar Títulos y Métricas
+    if modo_prueba:
+        errores_abs = abs(datos_test - proyeccion)
+        mape = (errores_abs / datos_test).mean() * 100
         precision = 100 - mape
-        
         titulo_grafico = f"Resultado de Auditoría: Precisión {precision:.1f}% (MAPE: {mape:.1f}%)"
         
-    else:
-        # LÓGICA DE FUTURO (PROYECCIÓN NORMAL)
-        modelo = ExponentialSmoothing(df_ventas['Ventas'], trend='add', seasonal='add', seasonal_periods=min(len(df_ventas), 12)).fit()
-        proyeccion = modelo.forecast(meses_proy)
+        # Variables para gráficas (Mode Prueba)
+        train = datos_modelo
+        test = datos_test
         
-        # Escenarios
+    else:
+        # Escenarios (Modo Futuro)
         opt = proyeccion * (1 + factor_riesgo)
         pes = proyeccion * (1 - factor_riesgo)
-        
         titulo_grafico = f"Proyección Futura a {meses_proy} Meses"
 
 except Exception as e:
-    st.error(f"Error matemático en el modelo: {e}. Intenta subir más meses de historia.")
+    st.error(f"Error matemático crítico: {e}. Intenta subir más historia.")
     st.stop()
-
 # --- 4. VISUALIZACIÓN (TABS RESTAURADOS) ---
 tab1, tab2, tab3 = st.tabs(["📊 Gráfico Principal", "📋 Tabla de Proyección", "🗂️ Datos Históricos"])
 
@@ -236,3 +259,4 @@ with tab3:
     st.subheader("Auditoría de Datos Extraídos")
     st.write(f"Se consolidaron {len(df_ventas)} meses a partir de los archivos subidos.")
     st.dataframe(df_ventas.sort_index(ascending=False).style.format("${:,.2f}"), use_container_width=True)
+
