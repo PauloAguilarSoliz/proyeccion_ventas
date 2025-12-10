@@ -201,30 +201,36 @@ except Exception as e:
 # --- 4. VISUALIZACIÓN (TABS RESTAURADOS) ---
 tab1, tab2, tab3 = st.tabs(["📊 Gráfico Principal", "📋 Tabla de Proyección", "🗂️ Datos Históricos"])
 
-# TAB 1: GRÁFICO
+# TAB 1: GRÁFICO (VERSIÓN CORREGIDA)
 with tab1:
     st.subheader(titulo_grafico)
     fig, ax = plt.subplots(figsize=(12, 5))
     plt.style.use('bmh')
     
     if modo_prueba:
-        # Pintar Auditoría
-        ax.plot(train.index, train['Ventas'], label='Entrenamiento', color='#2c3e50')
-        ax.plot(test.index, test['Ventas'], label='Realidad (Oculta)', color='green', marker='o')
+        # --- CORRECCIÓN AQUÍ ---
+        # Ahora 'train' y 'test' son Series directas, no DataFrames.
+        # Quitamos ['Ventas'] para graficar directamente el dato.
+        ax.plot(train.index, train, label='Entrenamiento', color='#2c3e50')
+        ax.plot(test.index, test, label='Realidad (Oculta)', color='green', marker='o')
         ax.plot(proyeccion.index, proyeccion, label='Predicción IA', color='#e67e22', linestyle='--')
+        
+        # Sombra de error visual
         ax.fill_between(proyeccion.index, proyeccion*0.95, proyeccion*1.05, color='#e67e22', alpha=0.1)
     else:
-        # Pintar Futuro
+        # Modo Futuro (Aquí seguimos usando df_ventas que sí es DataFrame)
         ax.plot(df_ventas.index, df_ventas['Ventas'], label='Histórico', color='#2c3e50')
-        # Conector visual
+        
+        # Conector visual para que no queden huecos
         ax.plot([df_ventas.index[-1], proyeccion.index[0]], [df_ventas['Ventas'].iloc[-1], proyeccion.iloc[0]], color='#e67e22', linestyle='--')
+        
         ax.plot(proyeccion.index, proyeccion, label='Base', color='#e67e22', linestyle='--', marker='o')
         ax.fill_between(proyeccion.index, pes, opt, color='#f1c40f', alpha=0.2, label=f'Riesgo +/-{volatilidad_input}%')
 
     ax.legend()
+    # Formato de dinero en el eje Y
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     st.pyplot(fig)
-
 # TAB 2: TABLA DE PROYECCIÓN (RESTAURADA)
 with tab2:
     st.subheader("Detalle Numérico")
@@ -259,4 +265,5 @@ with tab3:
     st.subheader("Auditoría de Datos Extraídos")
     st.write(f"Se consolidaron {len(df_ventas)} meses a partir de los archivos subidos.")
     st.dataframe(df_ventas.sort_index(ascending=False).style.format("${:,.2f}"), use_container_width=True)
+
 
