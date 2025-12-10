@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import io
 import xlsxwriter
-import re # NUEVO: Para detectar años en los nombres de archivo
+import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Consola Financiera IA", layout="wide", page_icon="📈")
@@ -29,36 +29,29 @@ def escanear_mes_en_hoja(df_preview, nombre_pestana):
     return None
 
 def detectar_anio_archivo(nombre_archivo, anio_default):
-    """
-    Busca un patrón de 4 dígitos (2023, 2024, etc.) en el nombre del archivo.
-    Si lo encuentra, usa ese año. Si no, usa el default.
-    """
-    # Buscamos números entre 2000 y 2030
+    """Busca un año (ej: 2023) en el nombre del archivo."""
     match = re.search(r'(20[2-3][0-9])', nombre_archivo)
     if match:
-        return int(match.group(1)), True # Retorna el año y True (Encontrado)
-    return anio_default, False # Retorna el default y False (No encontrado)
+        return int(match.group(1)), True
+    return anio_default, False
 
 def procesar_multiples_excels(archivos_subidos, anio_default_usuario):
     lista_datos = []
     log_errores = []
-    log_anios = [] # Para informar al usuario qué año detectamos
+    log_anios = []
 
     for archivo in archivos_subidos:
         try:
-            # 1. DETECCIÓN DE AÑO INTELIGENTE
             anio_archivo, encontrado = detectar_anio_archivo(archivo.name, anio_default_usuario)
             origen_anio = "Detectado en nombre" if encontrado else "Usado por defecto"
             log_anios.append(f"📄 {archivo.name} -> Año {anio_archivo} ({origen_anio})")
 
             xls = pd.ExcelFile(archivo)
             for nombre_hoja in xls.sheet_names:
-                # Lectura preliminar
                 df_preview = pd.read_excel(archivo, sheet_name=nombre_hoja, nrows=15, header=None)
                 mes_numero = escanear_mes_en_hoja(df_preview, nombre_hoja)
                 
                 if mes_numero:
-                    # Buscar fila MONTO
                     col_monto = None
                     fila_encabezado = -1
                     for i, row in df_preview.iterrows():
@@ -68,20 +61,16 @@ def procesar_multiples_excels(archivos_subidos, anio_default_usuario):
                             break
                     
                     if fila_encabezado != -1:
-                        # Leer datos reales
                         df_datos = pd.read_excel(archivo, sheet_name=nombre_hoja, header=fila_encabezado)
                         df_datos.columns = df_datos.columns.str.strip().str.upper()
                         
                         if 'MONTO' in df_datos.columns:
                             df_datos['MONTO'] = pd.to_numeric(df_datos['MONTO'], errors='coerce')
                             df_datos = df_datos.dropna(subset=['MONTO'])
-                            
                             col_primera = df_datos.columns[0]
                             df_datos = df_datos[~df_datos[col_primera].astype(str).str.upper().str.contains("TOTAL", na=False)]
                             
                             venta_mensual = df_datos['MONTO'].sum()
-                            
-                            # USAMOS EL AÑO DETECTADO ESPECÍFICO PARA ESTE ARCHIVO
                             fecha_construida = pd.Timestamp(year=anio_archivo, month=mes_numero, day=1)
                             
                             lista_datos.append({
@@ -94,15 +83,11 @@ def procesar_multiples_excels(archivos_subidos, anio_default_usuario):
 
     if lista_datos:
         df_final = pd.DataFrame(lista_datos)
-        # Sumamos por fecha (consolidando meses si se repiten)
         df_final = df_final.groupby('Fecha').sum(numeric_only=True).sort_index()
-        
-        # Rellenar huecos temporales (Importante para conectar 2023 con 2024 sin saltos)
         if not df_final.empty:
             idx_completo = pd.date_range(start=df_final.index.min(), end=df_final.index.max(), freq='MS')
             df_final = df_final.reindex(idx_completo).fillna(0)
             df_final.index.name = 'Fecha'
-            
         return df_final, log_errores, log_anios
     else:
         return None, log_errores, log_anios
@@ -115,33 +100,27 @@ def convertir_df_a_excel(df):
 
 # --- FRONTEND ---
 
-st.title("🤖 Consola de Inteligencia Financiera v7.0")
+st.title("🤖 Consola de Inteligencia Financiera v7.1")
 st.markdown("### Sistema Multi-Anual Inteligente")
 
-# --- 1. INGESTA ---
+# 1. INGESTA
 st.sidebar.header("1. Carga de Datos")
-st.sidebar.info("💡 Tip: Si el nombre del archivo tiene el año (ej: 'Ventas_2023.xlsx'), el sistema lo detectará automáticamente.")
-
-# Año por defecto (fallback)
-anio_default = st.sidebar.number_input("📅 Año por defecto (si el archivo no dice)", min_value=2020, max_value=2030, value=2024)
-
-uploaded_files = st.sidebar.file_uploader("Arrastra tus archivos (Varios años a la vez)", type=["xlsx", "xls"], accept_multiple_files=True)
+anio_default = st.sidebar.number_input("📅 Año por defecto", min_value=2020, max_value=2030, value=2024)
+uploaded_files = st.sidebar.file_uploader("Arrastra tus archivos", type=["xlsx", "xls"], accept_multiple_files=True)
 
 if not uploaded_files:
-    st.warning("👋 Sube los archivos de 2023 y 2024 juntos.")
+    st.info("👋 Sube los archivos para comenzar.")
     st.stop()
 
-# Procesamiento
-with st.spinner('Analizando años y meses...'):
+with st.spinner('Analizando...'):
     df_ventas, errores, log_anios = procesar_multiples_excels(uploaded_files, anio_default)
 
-# Mostrar qué años detectó
-with st.expander("✅ Auditoría de Años Detectados", expanded=True):
+with st.expander("✅ Auditoría de Archivos Detectados", expanded=False):
     for log in log_anios:
         st.write(log)
 
 if errores:
-    with st.expander("⚠️ Alertas"):
+    with st.expander("⚠️ Alertas de Lectura"):
         for e in errores:
             st.write(f"- {e}")
 
@@ -149,9 +128,7 @@ if df_ventas is None or df_ventas.empty:
     st.error("❌ No se pudieron extraer datos.")
     st.stop()
 
-st.sidebar.success(f"✅ Historia cargada: {len(df_ventas)} meses consecutivos.")
-
-# --- 2. MOTOR IA ---
+# 2. MOTOR IA
 st.sidebar.divider()
 st.sidebar.header("2. Motor IA")
 
@@ -161,34 +138,40 @@ factor_riesgo = volatilidad_input / 100
 meses_proy = st.sidebar.slider("Meses a Proyectar", 3, 24, 6)
 
 try:
+    # --- LÓGICA DE CORRECCIÓN DE MODELO Y ADVERTENCIAS ---
+    
+    # Definimos datos base
     if modo_prueba:
         if len(df_ventas) <= meses_proy:
             st.error("❌ Datos insuficientes para la prueba.")
             st.stop()
-        
+        # Usamos series directas
         train = df_ventas['Ventas'].iloc[:-meses_proy]
-        test = df_ventas['Ventas'].iloc[-meses_proy:] # Serie, no DF
-        
-        # Lógica Adaptativa
-        if len(train) < 18:
-             modelo = ExponentialSmoothing(train, trend='add', seasonal=None, damped_trend=True).fit()
-        else:
-             modelo = ExponentialSmoothing(train, trend='add', seasonal='add', seasonal_periods=12).fit()
-             
-        proyeccion = modelo.forecast(meses_proy)
-        
+        test = df_ventas['Ventas'].iloc[-meses_proy:]
+        datos_modelo = train
+    else:
+        datos_modelo = df_ventas['Ventas']
+
+    # Inteligencia Adaptativa + ADVERTENCIA RESTAURADA
+    usar_estacionalidad = False
+    
+    if len(datos_modelo) < 24: # Menos de 2 años
+         modelo = ExponentialSmoothing(datos_modelo, trend='add', seasonal=None, damped_trend=True).fit()
+         # ¡AQUÍ ESTÁ LA ADVERTENCIA DE VUELTA!
+         st.warning(f"⚠️ **Atención:** Tienes {len(datos_modelo)} meses de historia. Se necesitan 24 meses para detectar Patrones Anuales (Estacionalidad). El sistema usará solo Tendencia Lineal.")
+    else:
+         modelo = ExponentialSmoothing(datos_modelo, trend='add', seasonal='add', seasonal_periods=12).fit()
+         usar_estacionalidad = True
+         st.success(f"✅ Historia Robusta ({len(datos_modelo)} meses): Usando Tendencia + Estacionalidad Completa.")
+
+    proyeccion = modelo.forecast(meses_proy)
+    
+    # Preparar datos para visualización
+    if modo_prueba:
         errores_abs = abs(test - proyeccion)
         mape = (errores_abs / test).mean() * 100
-        titulo = f"Auditoría: Precisión {100-mape:.1f}%"
-        
+        titulo = f"Auditoría: Precisión {100-mape:.1f}% (MAPE: {mape:.1f}%)"
     else:
-        if len(df_ventas) < 18:
-             modelo = ExponentialSmoothing(df_ventas['Ventas'], trend='add', seasonal=None, damped_trend=True).fit()
-             st.toast("⚠️ Historia corta: Usando modelo de Tendencia (sin estacionalidad).")
-        else:
-             modelo = ExponentialSmoothing(df_ventas['Ventas'], trend='add', seasonal='add', seasonal_periods=12).fit()
-             
-        proyeccion = modelo.forecast(meses_proy)
         opt = proyeccion * (1 + factor_riesgo)
         pes = proyeccion * (1 - factor_riesgo)
         titulo = f"Proyección Futura ({meses_proy} meses)"
@@ -197,8 +180,8 @@ except Exception as e:
     st.error(f"Error matemático: {e}")
     st.stop()
 
-# --- 3. VISUALIZACIÓN ---
-tab1, tab2, tab3 = st.tabs(["📊 Gráfico", "📋 Tabla", "🗂️ Histórico"])
+# 3. VISUALIZACIÓN
+tab1, tab2, tab3 = st.tabs(["📊 Gráfico", "📋 Tabla Detallada", "🗂️ Histórico"])
 
 with tab1:
     st.subheader(titulo)
@@ -222,7 +205,12 @@ with tab1:
 
 with tab2:
     if modo_prueba:
-        df_comp = pd.DataFrame({"Real": test, "IA": proyeccion, "Diff": test-proyeccion})
+        # CORRECCIÓN DE KEYERROR: Usamos 'test' y 'proyeccion' directamente
+        df_comp = pd.DataFrame({
+            "Realidad": test, 
+            "IA": proyeccion, 
+            "Diferencia": test - proyeccion
+        })
         st.dataframe(df_comp.style.format("${:,.2f}"), use_container_width=True)
     else:
         df_det = pd.DataFrame({"Pesimista": pes, "Base": proyeccion, "Optimista": opt})
